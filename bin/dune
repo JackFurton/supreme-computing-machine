@@ -1,0 +1,8 @@
+; bin/dune -- Build config for our executable(s).
+;
+; This tells dune: "there's an executable called 'hello'
+; whose source is hello.ml"
+
+(executable
+ (name hello)
+ (public_name hello))

@@ -1,0 +1,14 @@
+# OCaml / dune build artifacts
+_build/
+*.install
+*.merlin
+
+# Nix build results
+result
+result-*
+
+# Editor
+.vscode/
+*.swp
+*~
+.idea/
