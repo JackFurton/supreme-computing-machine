@@ -43,3 +43,7 @@ val read_bytes : t -> int -> (string, error) result
 
 (** Read a DNS domain name (sequence of length-prefixed labels) *)
 val read_name : t -> (string list, error) result
+
+(** Monadic bind for chaining fallible operations.
+    [read_uint8 buf >>= fun byte -> ...] short-circuits on error. *)
+val ( >>= ) : ('a, error) result -> ('a -> ('b, error) result) -> ('b, error) result
