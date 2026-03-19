@@ -15,4 +15,5 @@
  (depends
   (ocaml (>= 4.14))
   (dune (>= 3.0))
+  (lwt (>= 5.0))
   (alcotest :with-test)))
