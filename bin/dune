@@ -1,8 +1,9 @@
 ; bin/dune -- Build config for our executable(s).
 ;
-; This tells dune: "there's an executable called 'hello'
-; whose source is hello.ml"
+; (libraries dns_parser) makes our library available to the binary.
+; This is how dune wires up dependencies between parts of your project.
 
 (executable
  (name hello)
- (public_name hello))
+ (public_name hello)
+ (libraries dns_parser))

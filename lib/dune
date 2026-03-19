@@ -1,0 +1,9 @@
+; lib/dune -- Build config for our DNS parser library.
+;
+; A "library" in OCaml/dune is a collection of modules
+; that can be used by executables and other libraries.
+; Think of it like a crate in Rust or a package in Go.
+
+(library
+ (name dns_parser)
+ (public_name supreme-computing-machine))

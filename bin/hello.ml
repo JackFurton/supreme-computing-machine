@@ -1,39 +1,43 @@
-(* hello.ml -- Your first OCaml program.
+(* hello.ml -- Demo of the DNS parser library.
+   
+   This constructs a raw DNS query packet by hand, then parses it
+   with our library and prints the result. *)
 
-   OCaml syntax crash course:
-   - (* ... *)           comments (they nest!)
-   - let x = 5           variable binding
-   - let f x y = x + y   function definition
-   - Printf.printf       module access (like Module.function)
-   - |>                   pipe operator (like Unix |)
-   - ;;                   end of top-level expression (in scripts/REPL)
-
-   OCaml is:
-   - Statically typed (like Rust/Go, unlike Python)
-   - But with TYPE INFERENCE -- you rarely write types manually
-   - Functional first, but has mutation when you want it
-   - Compiled to native code (fast!)
-*)
+(* Helper to build a byte string from a list of ints *)
+let bytes_of_list ints =
+  let buf = Bytes.create (List.length ints) in
+  List.iteri (fun i b -> Bytes.set buf i (Char.chr (b land 0xFF))) ints;
+  Bytes.to_string buf
 
 let () =
-  (* `let () =` is OCaml's "main function" idiom.
-     () is the "unit" type -- like void in C.
-     This says: "run this expression for its side effects." *)
+  print_endline "=== supreme-computing-machine ===";
+  print_endline "DNS packet parser demo\n";
 
-  print_endline "hello from supreme-computing-machine";
+  (* Construct a raw DNS query for "www.example.com" type A *)
+  let raw_packet = bytes_of_list [
+    (* Header *)
+    0xDE; 0xAD;   (* ID: 0xDEAD *)
+    0x01; 0x00;   (* Flags: standard query, recursion desired *)
+    0x00; 0x01;   (* 1 question *)
+    0x00; 0x00;   (* 0 answers *)
+    0x00; 0x00;   (* 0 authority *)
+    0x00; 0x00;   (* 0 additional *)
+    (* Question: www.example.com, type A, class IN *)
+    3; 0x77; 0x77; 0x77;                              (* "www" *)
+    7; 0x65; 0x78; 0x61; 0x6D; 0x70; 0x6C; 0x65;     (* "example" *)
+    3; 0x63; 0x6F; 0x6D;                              (* "com" *)
+    0;                                                 (* end of name *)
+    0x00; 0x01;   (* QTYPE = A *)
+    0x00; 0x01;   (* QCLASS = IN *)
+  ] in
 
-  (* Let's do something slightly more interesting --
-     demonstrate some OCaml features *)
+  Printf.printf "Raw packet: %d bytes\n\n" (String.length raw_packet);
 
-  let languages = ["Nix"; "OCaml"; "C"; "Assembly"] in
-  let count = List.length languages in
-
-  Printf.printf "we're going to learn %d languages on this journey:\n" count;
-
-  (* List.iteri iterates with an index. The function takes (index, element).
-     `fun` is an anonymous function (like a lambda). *)
-  List.iteri (fun i lang ->
-    Printf.printf "  %d. %s\n" (i + 1) lang
-  ) languages;
-
-  print_endline "\nnext up: build a unikernel."
+  match Dns_parser.Packet.parse raw_packet with
+  | Error e ->
+    Printf.printf "Parse error: %s\n" (Dns_parser.Buffer.string_of_error e)
+  | Ok packet ->
+    (* Print the parsed packet in dig-like format *)
+    print_endline (Dns_parser.Types.string_of_packet packet);
+    print_endline "";
+    print_endline "(parsed successfully)"

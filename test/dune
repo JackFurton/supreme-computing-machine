@@ -1,0 +1,8 @@
+; test/dune -- Test configuration.
+;
+; We use alcotest, a popular OCaml testing library.
+; It gives us nice colored output and structured test suites.
+
+(test
+ (name test_dns)
+ (libraries dns_parser alcotest))

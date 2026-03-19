@@ -72,6 +72,7 @@
             ocamlPkgs.ocamlformat     # code formatter
             ocamlPkgs.utop            # interactive REPL (great for learning!)
             ocamlPkgs.findlib         # library manager
+            ocamlPkgs.alcotest       # testing framework
 
             # -- System tools --
             pkgs.qemu                 # VM emulator (for booting our kernel later)
@@ -105,8 +106,16 @@
           version = "0.1.0";
           src = ./.;
 
-          # This tells Nix to build using dune (OCaml's build system)
-          # We'll flesh this out as we add more code.
+          # Runtime dependencies of our library/binary
+          propagatedBuildInputs = [ ];
+
+          # Test dependencies (only needed during `dune runtest`)
+          checkInputs = [
+            ocamlPkgs.alcotest
+          ];
+
+          # Enable tests during the Nix build
+          doCheck = true;
         };
       }
     );
