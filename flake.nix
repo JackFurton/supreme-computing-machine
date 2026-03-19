@@ -52,13 +52,95 @@
         # OCaml packages -- Nix has a complete set of opam packages.
         ocamlPkgs = pkgs.ocamlPackages;
 
+        # SOURCE FILTERING:
+        # When Nix builds a package, it copies the source into the
+        # Nix store (/nix/store/...). We filter out files that aren't
+        # needed for the build -- otherwise changes to .git/ or _build/
+        # would invalidate the cache and trigger a rebuild.
+        #
+        # This is a KEY Nix concept: the build is a PURE FUNCTION of
+        # its inputs. If the inputs don't change, the output is cached.
+        # Filtering source = fewer spurious rebuilds.
+        filteredSrc = pkgs.lib.cleanSourceWith {
+          src = ./.;
+          filter = path: type:
+            let
+              baseName = builtins.baseNameOf path;
+              # `builtins` is Nix's standard library -- always available.
+              # baseNameOf "/foo/bar/baz.ml" => "baz.ml"
+            in
+            # Keep only files needed for the OCaml build
+            !( baseName == "_build"
+            || baseName == ".git"
+            || baseName == "result"
+            || baseName == ".github"
+            || builtins.match ".*\\.md" baseName != null
+            );
+            # `builtins.match` does regex matching.
+            # != null means "did it match?"
+        };
+
+        # THE PACKAGE DERIVATION:
+        # This is the core concept of Nix. A "derivation" is a
+        # recipe for building something. It specifies:
+        #   - Source code (inputs)
+        #   - Build tools (dependencies)
+        #   - Build commands
+        #   - Output paths
+        #
+        # Nix builds derivations in a SANDBOX:
+        #   - No network access
+        #   - No access to $HOME
+        #   - No access to /tmp (gets its own)
+        #   - Only declared dependencies are available
+        #
+        # This is what makes builds reproducible: if it builds in
+        # the sandbox, it builds anywhere.
+
+        supreme-computing-machine = ocamlPkgs.buildDunePackage {
+          pname = "supreme-computing-machine";
+          version = "0.1.0";
+
+          # Use our filtered source (not raw ./. which includes .git etc.)
+          src = filteredSrc;
+
+          # DUNE BUILD FLAGS:
+          # buildDunePackage calls `dune build` under the hood.
+          # We can pass extra flags if needed.
+          duneVersion = "3";
+
+          # BUILD DEPENDENCIES:
+          # These are OCaml libraries our code imports.
+          # `buildInputs` = needed at build time only.
+          # `propagatedBuildInputs` = needed by downstream consumers too.
+          #
+          # Right now our library has no external deps (just stdlib),
+          # but the executable will need the library, which dune handles.
+          buildInputs = [ ];
+
+          # TEST DEPENDENCIES:
+          # `checkInputs` are only available when running tests.
+          # They don't leak into the final package.
+          checkInputs = [
+            ocamlPkgs.alcotest
+          ];
+
+          # Run tests as part of `nix build`.
+          # If tests fail, the build fails. No broken builds in the store.
+          doCheck = true;
+        };
+
       in
       {
         # DEV SHELL: This is what you get when you run `nix develop`.
         # It drops you into a shell with all these tools available,
         # without installing anything globally on your system.
         #
-        # When you leave the shell, it's like nothing was ever installed.
+        # KEY DIFFERENCE from packages:
+        #   `nix develop`  = gives you tools to work with (interactive)
+        #   `nix build`    = produces a built artifact (automated)
+        #
+        # The dev shell is for humans. The package build is for machines.
 
         devShells.default = pkgs.mkShell {
           name = "supreme-computing-machine";
@@ -72,7 +154,7 @@
             ocamlPkgs.ocamlformat     # code formatter
             ocamlPkgs.utop            # interactive REPL (great for learning!)
             ocamlPkgs.findlib         # library manager
-            ocamlPkgs.alcotest       # testing framework
+            ocamlPkgs.alcotest        # testing framework
 
             # -- System tools --
             pkgs.qemu                 # VM emulator (for booting our kernel later)
@@ -86,37 +168,47 @@
             echo "================================================="
             echo " supreme-computing-machine dev shell"
             echo " OCaml $(ocaml --version)"
-            echo " QEMU $(qemu-system-aarch64 --version | head -1)"
             echo "================================================="
             echo ""
-            echo " Quick start:"
-            echo "   utop          -- OCaml REPL (interactive playground)"
-            echo "   dune build    -- compile the project"
-            echo "   dune exec hello  -- run the hello program"
+            echo " Commands:"
+            echo "   dune build       -- compile the project"
+            echo "   dune exec hello  -- run the DNS parser demo"
+            echo "   dune runtest     -- run the test suite"
+            echo "   utop             -- interactive OCaml REPL"
             echo ""
           '';
         };
 
-        # PACKAGES: Things our flake can build.
-        # `nix build` will build the default package.
-        # We'll add our actual kernel/unikernel build here later.
+        # PACKAGES: What `nix build` produces.
+        #
+        # After running `nix build`, you get a symlink called `result/`
+        # pointing into the Nix store:
+        #
+        #   result/
+        #   └── bin/
+        #       └── hello    <-- our compiled binary
+        #
+        # You can also run it directly: `nix run`
+        #
+        # The binary is FULLY SELF-CONTAINED. Copy it anywhere and it works.
+        # (Well, on the same OS/arch. Nix handles cross-compilation too,
+        # but that's a topic for another day.)
 
-        packages.default = ocamlPkgs.buildDunePackage {
-          pname = "supreme-computing-machine";
-          version = "0.1.0";
-          src = ./.;
+        packages.default = supreme-computing-machine;
 
-          # Runtime dependencies of our library/binary
-          propagatedBuildInputs = [ ];
+        # APPS: What `nix run` executes.
+        # This tells Nix which binary to run when you type `nix run`.
 
-          # Test dependencies (only needed during `dune runtest`)
-          checkInputs = [
-            ocamlPkgs.alcotest
-          ];
-
-          # Enable tests during the Nix build
-          doCheck = true;
+        apps.default = {
+          type = "app";
+          program = "${supreme-computing-machine}/bin/hello";
         };
+
+        # CHECKS: What `nix flake check` validates.
+        # CI will run this to verify the flake is healthy.
+        # We just re-use the package build (which includes tests).
+
+        checks.default = supreme-computing-machine;
       }
     );
 }

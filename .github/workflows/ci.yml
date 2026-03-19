@@ -1,0 +1,76 @@
+# ci.yml -- GitHub Actions workflow powered by Nix.
+#
+# THIS IS THE PAYOFF OF USING NIX:
+#
+# Traditional CI:
+#   - Install OCaml via apt/brew (hope it's the right version)
+#   - Install opam, run opam install (5+ minutes)
+#   - Install each dependency manually
+#   - Debug CI-only failures because versions don't match local
+#
+# Nix CI:
+#   - Install Nix
+#   - Run `nix build` (uses the EXACT same toolchain as local dev)
+#   - That's it. If it works locally, it works in CI. Period.
+#
+# The Nix store is cached between runs, so after the first build
+# (which downloads/compiles the toolchain), subsequent runs are fast.
+
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    # We run on Ubuntu. Nix handles everything else --
+    # we don't need to care what the runner has installed.
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Check out the code
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2. Install Nix using the Determinate Systems installer.
+      #    This is the same installer we recommend for local dev.
+      #    It enables flakes by default and sets up the Nix daemon.
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      # 3. Set up Nix store caching.
+      #    This caches /nix/store between CI runs so we don't
+      #    re-download the entire OCaml toolchain every time.
+      #    First run: ~5-10 minutes. Subsequent runs: ~30 seconds.
+      - name: Setup Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      # 4. Validate the flake structure.
+      #    `nix flake check` verifies:
+      #    - The flake.nix is syntactically valid
+      #    - All outputs evaluate without errors
+      #    - The `checks` output passes (which runs our build + tests)
+      #
+      #    This is the ONLY command we need. It builds the package,
+      #    runs the tests, and validates the flake -- all in one.
+      - name: Build and test
+        run: nix flake check --print-build-logs
+
+      # 5. Verify the binary actually runs.
+      #    Belt and suspenders -- make sure `nix run` produces output.
+      - name: Smoke test
+        run: nix run 2>&1 | grep -q "supreme-computing-machine"
+
+      # 6. Show what we built (informational).
+      - name: Show build output
+        run: |
+          nix build
+          echo "Build output:"
+          ls -la result/
+          ls -la result/bin/
+          echo ""
+          echo "Binary output:"
+          result/bin/hello
