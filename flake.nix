@@ -129,6 +129,125 @@
           doCheck = true;
         };
 
+        # DOCKER IMAGE:
+        # Nix can build Docker/OCI images WITHOUT Docker installed.
+        # No Dockerfile, no layer caching games, no base image --
+        # Nix builds the image from scratch with ONLY what we need.
+        #
+        # This is another taste of the unikernel philosophy:
+        # include only what your application needs, nothing else.
+        # A typical Docker image has a full Linux userspace (100+ MB).
+        # Ours has just our binary and its runtime deps (~30 MB).
+        #
+        # HOW IT WORKS:
+        # `pkgs.dockerTools.buildLayeredImage` creates an OCI image
+        # as a .tar.gz file. You can load it with `docker load`.
+        #
+        # No Docker daemon needed at build time. Pure Nix.
+
+        dockerImage = pkgs.dockerTools.buildLayeredImage {
+          name = "supreme-computing-machine";
+          tag = "latest";
+
+          contents = [
+            supreme-computing-machine    # Our binaries
+            pkgs.busybox                 # Minimal shell utilities
+          ];
+
+          config = {
+            Cmd = [ "/bin/dns_unikernel" "53" ];
+            ExposedPorts = { "53/udp" = {}; };
+          };
+        };
+
+        # QEMU LAUNCH SCRIPT:
+        # For the full "boot a VM" experience, this script runs our
+        # DNS server in QEMU using Linux's direct-boot feature.
+        #
+        # We build a minimal initramfs (initial RAM filesystem) that
+        # contains just our binary and a tiny init script.
+        # The Linux kernel boots, unpacks the initramfs, runs init,
+        # and our DNS server is live -- all in under 2 seconds.
+        #
+        # This is the closest thing to a real unikernel we can do
+        # without MirageOS's Solo5 backend. The difference:
+        #   - Real unikernel: OCaml code IS the kernel (no Linux)
+        #   - Our version: Linux kernel + our binary as PID 1
+        #   - Same result: a single-purpose VM running one application
+
+        # Build the initramfs (initial RAM filesystem)
+        initramfs = pkgs.makeInitrdNG {
+          contents = [
+            { object = "${supreme-computing-machine}/bin/dns_unikernel";
+              symlink = "/bin/dns_unikernel"; }
+            { object = "${pkgs.busybox}/bin/busybox";
+              symlink = "/bin/busybox"; }
+            { object = pkgs.writeScript "init" ''
+                #!${pkgs.busybox}/bin/sh
+                export PATH=/bin
+
+                # Create minimal filesystem structure
+                /bin/busybox mkdir -p /proc /sys /dev /tmp
+                /bin/busybox mount -t proc proc /proc
+                /bin/busybox mount -t sysfs sys /sys
+                /bin/busybox mount -t devtmpfs dev /dev
+
+                # Set up networking
+                /bin/busybox ip link set lo up
+                /bin/busybox ip link set eth0 up 2>/dev/null
+                /bin/busybox ip addr add 10.0.2.15/24 dev eth0 2>/dev/null
+                /bin/busybox ip route add default via 10.0.2.2 2>/dev/null
+
+                echo ""
+                echo "========================================="
+                echo " supreme-computing-machine DNS appliance"
+                echo " Running in QEMU -- this is a VM!"
+                echo "========================================="
+                echo ""
+
+                # Run our DNS server as PID 1
+                exec /bin/dns_unikernel 53
+              '';
+              symlink = "/init"; }
+          ];
+        };
+
+        # Kernel image path differs by architecture
+        kernelImage =
+          if builtins.match ".*aarch64.*" system != null
+          then "${pkgs.linuxPackages_minimal.kernel}/${pkgs.stdenv.hostPlatform.linux-kernel.target}"
+          else "${pkgs.linuxPackages_minimal.kernel}/${pkgs.stdenv.hostPlatform.linux-kernel.target}";
+
+        qemuBin =
+          if builtins.match ".*aarch64.*" system != null
+          then "${pkgs.qemu}/bin/qemu-system-aarch64"
+          else "${pkgs.qemu}/bin/qemu-system-x86_64";
+
+        qemuMachineFlags =
+          if builtins.match ".*aarch64.*" system != null
+          then "-machine virt -cpu cortex-a57"
+          else "-machine q35";
+
+        appliance = pkgs.writeShellScriptBin "dns-appliance" ''
+          echo "=== supreme-computing-machine DNS appliance ==="
+          echo ""
+          echo "Booting a VM with our DNS server as the only process..."
+          echo ""
+          echo "  Test with:  dig @127.0.0.1 -p 5353 example.com A"
+          echo "  Stop with:  Ctrl-A then X"
+          echo ""
+
+          ${qemuBin} \
+            ${qemuMachineFlags} \
+            -m 256M \
+            -kernel ${kernelImage} \
+            -initrd ${initramfs}/initrd \
+            -append "console=ttyS0 quiet" \
+            -nographic \
+            -netdev user,id=net0,hostfwd=udp::5353-:53 \
+            -device virtio-net-pci,netdev=net0
+        '';
+
       in
       {
         # DEV SHELL: This is what you get when you run `nix develop`.
@@ -171,12 +290,18 @@
             echo "================================================="
             echo ""
             echo " Commands:"
-            echo "   dune build       -- compile the project"
-            echo "   dune exec hello  -- run the DNS parser demo"
-            echo "   dune exec dns_client -- example.com  -- query DNS"
-            echo "   dune exec dns_server                 -- run DNS server"
-            echo "   dune runtest     -- run the test suite"
-            echo "   utop             -- interactive OCaml REPL"
+            echo "   dune build                            -- compile everything"
+            echo "   dune exec hello                       -- DNS parser demo"
+            echo "   dune exec dns_client -- example.com   -- query real DNS"
+            echo "   dune exec dns_server                  -- run DNS server"
+            echo "   dune exec -- unikernel/main.exe       -- run unikernel (Unix)"
+            echo "   dune runtest                          -- run test suite"
+            echo "   utop                                  -- OCaml REPL"
+            echo ""
+            echo " Nix commands:"
+            echo "   nix run .#server                      -- run DNS server"
+            echo "   nix run .#appliance                   -- boot DNS VM in QEMU"
+            echo "   nix build .#docker                    -- build Docker image"
             echo ""
           '';
         };
@@ -196,14 +321,41 @@
         # (Well, on the same OS/arch. Nix handles cross-compilation too,
         # but that's a topic for another day.)
 
-        packages.default = supreme-computing-machine;
+        packages = {
+          default = supreme-computing-machine;
+
+          # `nix build .#docker` -- build the Docker image
+          docker = dockerImage;
+
+          # `nix build .#appliance` -- build the QEMU launcher
+          vm-appliance = appliance;
+        };
 
         # APPS: What `nix run` executes.
-        # This tells Nix which binary to run when you type `nix run`.
+        #
+        # Multiple apps! Each one is a different way to run the project:
+        #   `nix run`             -- run the hello demo
+        #   `nix run .#server`    -- run the DNS server natively
+        #   `nix run .#client`    -- run the DNS client
+        #   `nix run .#appliance` -- boot the DNS server in a QEMU VM
 
-        apps.default = {
-          type = "app";
-          program = "${supreme-computing-machine}/bin/hello";
+        apps = {
+          default = {
+            type = "app";
+            program = "${supreme-computing-machine}/bin/hello";
+          };
+          server = {
+            type = "app";
+            program = "${supreme-computing-machine}/bin/dns_unikernel";
+          };
+          client = {
+            type = "app";
+            program = "${supreme-computing-machine}/bin/dns_client";
+          };
+          appliance = {
+            type = "app";
+            program = "${appliance}/bin/dns-appliance";
+          };
         };
 
         # CHECKS: What `nix flake check` validates.
