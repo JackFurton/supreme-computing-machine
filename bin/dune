@@ -1,9 +1,9 @@
-; bin/dune -- Build config for our executable(s).
+; bin/dune -- Build config for our executables.
 ;
-; (libraries dns_parser) makes our library available to the binary.
-; This is how dune wires up dependencies between parts of your project.
+; `executables` (plural) lets us define multiple binaries in one directory.
+; Each binary gets its own .ml file and its own set of libraries.
 
-(executable
- (name hello)
- (public_name hello)
- (libraries dns_parser))
+(executables
+ (names hello dns_client dns_server)
+ (public_names hello dns_client dns_server)
+ (libraries dns_parser lwt lwt.unix))

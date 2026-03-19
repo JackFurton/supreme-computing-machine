@@ -113,10 +113,9 @@
           # These are OCaml libraries our code imports.
           # `buildInputs` = needed at build time only.
           # `propagatedBuildInputs` = needed by downstream consumers too.
-          #
-          # Right now our library has no external deps (just stdlib),
-          # but the executable will need the library, which dune handles.
-          buildInputs = [ ];
+          buildInputs = [
+            ocamlPkgs.lwt          # Async/promise library (foundation of MirageOS)
+          ];
 
           # TEST DEPENDENCIES:
           # `checkInputs` are only available when running tests.
@@ -155,6 +154,7 @@
             ocamlPkgs.utop            # interactive REPL (great for learning!)
             ocamlPkgs.findlib         # library manager
             ocamlPkgs.alcotest        # testing framework
+            ocamlPkgs.lwt             # async/promises (MirageOS foundation)
 
             # -- System tools --
             pkgs.qemu                 # VM emulator (for booting our kernel later)
@@ -173,6 +173,8 @@
             echo " Commands:"
             echo "   dune build       -- compile the project"
             echo "   dune exec hello  -- run the DNS parser demo"
+            echo "   dune exec dns_client -- example.com  -- query DNS"
+            echo "   dune exec dns_server                 -- run DNS server"
             echo "   dune runtest     -- run the test suite"
             echo "   utop             -- interactive OCaml REPL"
             echo ""

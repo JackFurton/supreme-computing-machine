@@ -12,3 +12,5 @@ module Header = Header
 module Question = Question
 module Types = Types
 module Buffer = Read_buffer
+module Write_buffer = Write_buffer
+module Serialize = Serialize

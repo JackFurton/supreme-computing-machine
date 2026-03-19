@@ -201,6 +201,35 @@ let test_string_of_packet () =
     Alcotest.(check bool) "contains domain" true
       (let _ = s in true)  (* If we got here without exception, formatting works *)
 
+(* ---- Test: Serialization roundtrip ---- *)
+(* Build a packet, serialize it, parse it back, verify it matches.
+   This is a PROPERTY-BASED test idea: serialize(parse(x)) = x *)
+
+let test_serialize_roundtrip () =
+  let open Dns_parser.Types in
+  let labels = ["www"; "example"; "com"] in
+  let query_bytes = Dns_parser.Serialize.build_query labels A in
+  match Dns_parser.Packet.parse query_bytes with
+  | Error e -> Alcotest.fail (Dns_parser.Buffer.string_of_error e)
+  | Ok packet ->
+    Alcotest.(check bool) "is query" true (packet.header.qr = Query);
+    Alcotest.(check bool) "rd set" true packet.header.recursion_desired;
+    Alcotest.(check int) "1 question" 1 (List.length packet.questions);
+    let q = List.hd packet.questions in
+    Alcotest.(check (list string)) "qname roundtrip" labels q.qname;
+    Alcotest.(check bool) "qtype roundtrip" true (q.qtype = A);
+    Alcotest.(check bool) "qclass roundtrip" true (q.qclass = IN)
+
+let test_write_buffer () =
+  let buf = Dns_parser.Write_buffer.create () in
+  Dns_parser.Write_buffer.write_uint8 buf 0x42;
+  Dns_parser.Write_buffer.write_uint16 buf 0xBEEF;
+  let contents = Dns_parser.Write_buffer.contents buf in
+  Alcotest.(check int) "length" 3 (String.length contents);
+  Alcotest.(check int) "byte 0" 0x42 (Char.code contents.[0]);
+  Alcotest.(check int) "byte 1" 0xBE (Char.code contents.[1]);
+  Alcotest.(check int) "byte 2" 0xEF (Char.code contents.[2])
+
 (* ---- Test suite registration ---- *)
 
 let () =
@@ -209,6 +238,9 @@ let () =
       Alcotest.test_case "read_uint8"  `Quick test_read_uint8;
       Alcotest.test_case "read_uint16" `Quick test_read_uint16;
       Alcotest.test_case "read_name"   `Quick test_read_name;
+    ];
+    "write_buffer", [
+      Alcotest.test_case "write basics"  `Quick test_write_buffer;
     ];
     "header", [
       Alcotest.test_case "parse standard query"    `Quick test_parse_header;
@@ -219,5 +251,8 @@ let () =
       Alcotest.test_case "parse AAAA query"        `Quick test_parse_aaaa_query;
       Alcotest.test_case "truncated packet fails"  `Quick test_parse_truncated_packet;
       Alcotest.test_case "string_of_packet works"  `Quick test_string_of_packet;
+    ];
+    "serialize", [
+      Alcotest.test_case "roundtrip query"  `Quick test_serialize_roundtrip;
     ];
   ]
