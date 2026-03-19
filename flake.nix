@@ -15,208 +15,124 @@
 #   "${expr}"        -- string interpolation
 #
 {
-  # INPUTS: These are the dependencies of our flake.
-  # Nix will fetch these automatically. Think of them like
-  # "dependencies" in package.json, but for your entire toolchain.
-
   description = "supreme-computing-machine: learning Nix + OCaml + MirageOS";
 
   inputs = {
-    # nixpkgs is THE package repository -- ~100,000 packages.
-    # We pin to a specific branch so builds are reproducible.
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-
-    # flake-utils gives us helper functions so we don't have to
-    # write boilerplate for each CPU architecture (x86, arm, etc.)
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  # OUTPUTS: This is a function that takes our resolved inputs
-  # and returns what our flake "provides" to the world.
-  #
-  # The `{ self, nixpkgs, flake-utils }` syntax is "destructuring" --
-  # it pulls those names out of the inputs attribute set.
-
   outputs = { self, nixpkgs, flake-utils }:
 
-    # eachDefaultSystem runs our function once for each platform
-    # (x86_64-linux, aarch64-linux, x86_64-darwin, aarch64-darwin)
-    # and merges the results. This means our flake works on any machine.
     flake-utils.lib.eachDefaultSystem (system:
 
       let
-        # `pkgs` is now the full Nix package set for our specific system.
-        # This is where all 100,000+ packages live.
         pkgs = import nixpkgs { inherit system; };
-
-        # OCaml packages -- Nix has a complete set of opam packages.
         ocamlPkgs = pkgs.ocamlPackages;
 
-        # SOURCE FILTERING:
-        # When Nix builds a package, it copies the source into the
-        # Nix store (/nix/store/...). We filter out files that aren't
-        # needed for the build -- otherwise changes to .git/ or _build/
-        # would invalidate the cache and trigger a rebuild.
-        #
-        # This is a KEY Nix concept: the build is a PURE FUNCTION of
-        # its inputs. If the inputs don't change, the output is cached.
-        # Filtering source = fewer spurious rebuilds.
+        # Is this a Linux system? Docker images and QEMU VMs are Linux-only.
+        isLinux = builtins.match ".*linux.*" system != null;
+
+        # ── Source filtering ─────────────────────────────────────────
+        # Filter out files that aren't needed for the build so that
+        # changes to .git/ or .md files don't invalidate the Nix cache.
+
         filteredSrc = pkgs.lib.cleanSourceWith {
           src = ./.;
           filter = path: type:
-            let
-              baseName = builtins.baseNameOf path;
-              # `builtins` is Nix's standard library -- always available.
-              # baseNameOf "/foo/bar/baz.ml" => "baz.ml"
-            in
-            # Keep only files needed for the OCaml build
+            let baseName = builtins.baseNameOf path; in
             !( baseName == "_build"
             || baseName == ".git"
             || baseName == "result"
             || baseName == ".github"
             || builtins.match ".*\\.md" baseName != null
             );
-            # `builtins.match` does regex matching.
-            # != null means "did it match?"
         };
 
-        # THE PACKAGE DERIVATION:
-        # This is the core concept of Nix. A "derivation" is a
-        # recipe for building something. It specifies:
-        #   - Source code (inputs)
-        #   - Build tools (dependencies)
-        #   - Build commands
-        #   - Output paths
-        #
-        # Nix builds derivations in a SANDBOX:
-        #   - No network access
-        #   - No access to $HOME
-        #   - No access to /tmp (gets its own)
-        #   - Only declared dependencies are available
-        #
-        # This is what makes builds reproducible: if it builds in
-        # the sandbox, it builds anywhere.
+        # ── The main OCaml package ───────────────────────────────────
 
         supreme-computing-machine = ocamlPkgs.buildDunePackage {
           pname = "supreme-computing-machine";
           version = "0.1.0";
-
-          # Use our filtered source (not raw ./. which includes .git etc.)
           src = filteredSrc;
-
-          # DUNE BUILD FLAGS:
-          # buildDunePackage calls `dune build` under the hood.
-          # We can pass extra flags if needed.
           duneVersion = "3";
-
-          # BUILD DEPENDENCIES:
-          # These are OCaml libraries our code imports.
-          # `buildInputs` = needed at build time only.
-          # `propagatedBuildInputs` = needed by downstream consumers too.
-          buildInputs = [
-            ocamlPkgs.lwt          # Async/promise library (foundation of MirageOS)
-          ];
-
-          # TEST DEPENDENCIES:
-          # `checkInputs` are only available when running tests.
-          # They don't leak into the final package.
-          checkInputs = [
-            ocamlPkgs.alcotest
-          ];
-
-          # Run tests as part of `nix build`.
-          # If tests fail, the build fails. No broken builds in the store.
+          buildInputs = [ ocamlPkgs.lwt ];
+          checkInputs = [ ocamlPkgs.alcotest ];
           doCheck = true;
         };
 
-        # DOCKER IMAGE:
-        # Nix can build Docker/OCI images WITHOUT Docker installed.
-        # No Dockerfile, no layer caching games, no base image --
-        # Nix builds the image from scratch with ONLY what we need.
-        #
-        # This is another taste of the unikernel philosophy:
-        # include only what your application needs, nothing else.
-        # A typical Docker image has a full Linux userspace (100+ MB).
-        # Ours has just our binary and its runtime deps (~30 MB).
-        #
-        # HOW IT WORKS:
-        # `pkgs.dockerTools.buildLayeredImage` creates an OCI image
-        # as a .tar.gz file. You can load it with `docker load`.
-        #
-        # No Docker daemon needed at build time. Pure Nix.
+        # ── Linux-only: Docker image ────────────────────────────────
+        # Nix builds OCI images WITHOUT Docker. No Dockerfile needed.
+        # The resulting image contains ONLY our binary + busybox (~30 MB).
 
         dockerImage = pkgs.dockerTools.buildLayeredImage {
           name = "supreme-computing-machine";
           tag = "latest";
-
-          contents = [
-            supreme-computing-machine    # Our binaries
-            pkgs.busybox                 # Minimal shell utilities
-          ];
-
+          contents = [ supreme-computing-machine pkgs.busybox ];
           config = {
             Cmd = [ "/bin/dns_unikernel" "53" ];
             ExposedPorts = { "53/udp" = {}; };
           };
         };
 
-        # QEMU LAUNCH SCRIPT:
-        # For the full "boot a VM" experience, this script runs our
-        # DNS server in QEMU using Linux's direct-boot feature.
-        #
-        # We build a minimal initramfs (initial RAM filesystem) that
-        # contains just our binary and a tiny init script.
-        # The Linux kernel boots, unpacks the initramfs, runs init,
-        # and our DNS server is live -- all in under 2 seconds.
-        #
-        # This is the closest thing to a real unikernel we can do
-        # without MirageOS's Solo5 backend. The difference:
-        #   - Real unikernel: OCaml code IS the kernel (no Linux)
-        #   - Our version: Linux kernel + our binary as PID 1
-        #   - Same result: a single-purpose VM running one application
+        # ── Linux-only: QEMU VM appliance ───────────────────────────
+        # Boots a minimal Linux VM with our DNS server as PID 1.
+        # Builds a custom initramfs (cpio archive) with just our binary.
 
-        # Build the initramfs (initial RAM filesystem)
-        initramfs = pkgs.makeInitrdNG {
-          contents = [
-            { object = "${supreme-computing-machine}/bin/dns_unikernel";
-              symlink = "/bin/dns_unikernel"; }
-            { object = "${pkgs.busybox}/bin/busybox";
-              symlink = "/bin/busybox"; }
-            { object = pkgs.writeScript "init" ''
-                #!${pkgs.busybox}/bin/sh
-                export PATH=/bin
+        initScript = pkgs.writeScript "init" ''
+          #!/bin/sh
+          export PATH=/bin:/usr/bin
+          mkdir -p /proc /sys /dev /tmp
+          mount -t proc proc /proc
+          mount -t sysfs sys /sys
+          mount -t devtmpfs dev /dev
+          ip link set lo up
+          ip link set eth0 up 2>/dev/null
+          ip addr add 10.0.2.15/24 dev eth0 2>/dev/null
+          ip route add default via 10.0.2.2 2>/dev/null
+          echo ""
+          echo "========================================="
+          echo " supreme-computing-machine DNS appliance"
+          echo " Running in QEMU -- this is a VM!"
+          echo "========================================="
+          echo ""
+          exec /bin/dns_unikernel 53
+        '';
 
-                # Create minimal filesystem structure
-                /bin/busybox mkdir -p /proc /sys /dev /tmp
-                /bin/busybox mount -t proc proc /proc
-                /bin/busybox mount -t sysfs sys /sys
-                /bin/busybox mount -t devtmpfs dev /dev
+        initramfs = pkgs.runCommand "dns-initramfs" {
+          nativeBuildInputs = [ pkgs.cpio pkgs.gzip ];
+        } ''
+          mkdir -p root/bin root/lib root/lib64
 
-                # Set up networking
-                /bin/busybox ip link set lo up
-                /bin/busybox ip link set eth0 up 2>/dev/null
-                /bin/busybox ip addr add 10.0.2.15/24 dev eth0 2>/dev/null
-                /bin/busybox ip route add default via 10.0.2.2 2>/dev/null
+          # Busybox for shell + networking commands
+          cp ${pkgs.busybox}/bin/busybox root/bin/busybox
+          for cmd in sh ip mount mkdir echo cat ls; do
+            ln -s busybox root/bin/$cmd
+          done
 
-                echo ""
-                echo "========================================="
-                echo " supreme-computing-machine DNS appliance"
-                echo " Running in QEMU -- this is a VM!"
-                echo "========================================="
-                echo ""
+          # Our DNS server binary
+          cp ${supreme-computing-machine}/bin/dns_unikernel root/bin/dns_unikernel
 
-                # Run our DNS server as PID 1
-                exec /bin/dns_unikernel 53
-              '';
-              symlink = "/init"; }
-          ];
-        };
+          # Init script
+          cp ${initScript} root/init
+          chmod +x root/init
 
-        # Kernel image path differs by architecture
-        kernelImage =
-          if builtins.match ".*aarch64.*" system != null
-          then "${pkgs.linuxPackages_minimal.kernel}/${pkgs.stdenv.hostPlatform.linux-kernel.target}"
-          else "${pkgs.linuxPackages_minimal.kernel}/${pkgs.stdenv.hostPlatform.linux-kernel.target}";
+          # Shared libraries needed by our dynamically-linked binary
+          for lib in $(${pkgs.findutils}/bin/find \
+            ${pkgs.glibc}/lib \
+            ${pkgs.gcc.cc.lib}/lib \
+            -maxdepth 1 \
+            -name '*.so*' 2>/dev/null); do
+            cp -n "$lib" root/lib/ 2>/dev/null || true
+          done
+
+          # Dynamic linker (may be in lib or lib64 depending on arch)
+          cp ${pkgs.glibc}/lib/ld-linux-*.so.* root/lib/ 2>/dev/null || true
+          cp ${pkgs.glibc}/lib/ld-linux-*.so.* root/lib64/ 2>/dev/null || true
+
+          # Build compressed cpio archive
+          (cd root && ${pkgs.findutils}/bin/find . | cpio -o -H newc | gzip > $out)
+        '';
 
         qemuBin =
           if builtins.match ".*aarch64.*" system != null
@@ -240,8 +156,8 @@
           ${qemuBin} \
             ${qemuMachineFlags} \
             -m 256M \
-            -kernel ${kernelImage} \
-            -initrd ${initramfs}/initrd \
+            -kernel ${pkgs.linuxPackages.kernel}/${pkgs.stdenv.hostPlatform.linux-kernel.target} \
+            -initrd ${initramfs} \
             -append "console=ttyS0 quiet" \
             -nographic \
             -netdev user,id=net0,hostfwd=udp::5353-:53 \
@@ -250,39 +166,22 @@
 
       in
       {
-        # DEV SHELL: This is what you get when you run `nix develop`.
-        # It drops you into a shell with all these tools available,
-        # without installing anything globally on your system.
-        #
-        # KEY DIFFERENCE from packages:
-        #   `nix develop`  = gives you tools to work with (interactive)
-        #   `nix build`    = produces a built artifact (automated)
-        #
-        # The dev shell is for humans. The package build is for machines.
+        # ── Dev shell ────────────────────────────────────────────────
 
         devShells.default = pkgs.mkShell {
           name = "supreme-computing-machine";
-
-          # Packages available in the dev shell
           buildInputs = [
-            # -- OCaml toolchain --
-            ocamlPkgs.ocaml           # the compiler
-            ocamlPkgs.dune_3          # build system (like cargo/make for OCaml)
-            ocamlPkgs.ocaml-lsp       # editor support
-            ocamlPkgs.ocamlformat     # code formatter
-            ocamlPkgs.utop            # interactive REPL (great for learning!)
-            ocamlPkgs.findlib         # library manager
-            ocamlPkgs.alcotest        # testing framework
-            ocamlPkgs.lwt             # async/promises (MirageOS foundation)
-
-            # -- System tools --
-            pkgs.qemu                 # VM emulator (for booting our kernel later)
-            pkgs.git                  # you know this one
-
-            # -- Later we'll add MirageOS tools here --
+            ocamlPkgs.ocaml
+            ocamlPkgs.dune_3
+            ocamlPkgs.ocaml-lsp
+            ocamlPkgs.ocamlformat
+            ocamlPkgs.utop
+            ocamlPkgs.findlib
+            ocamlPkgs.alcotest
+            ocamlPkgs.lwt
+            pkgs.qemu
+            pkgs.git
           ];
-
-          # This runs when you enter the dev shell
           shellHook = ''
             echo "================================================="
             echo " supreme-computing-machine dev shell"
@@ -306,38 +205,18 @@
           '';
         };
 
-        # PACKAGES: What `nix build` produces.
-        #
-        # After running `nix build`, you get a symlink called `result/`
-        # pointing into the Nix store:
-        #
-        #   result/
-        #   └── bin/
-        #       └── hello    <-- our compiled binary
-        #
-        # You can also run it directly: `nix run`
-        #
-        # The binary is FULLY SELF-CONTAINED. Copy it anywhere and it works.
-        # (Well, on the same OS/arch. Nix handles cross-compilation too,
-        # but that's a topic for another day.)
+        # ── Packages ─────────────────────────────────────────────────
+        # `nix build` builds the default. Linux gets docker + VM too.
 
         packages = {
           default = supreme-computing-machine;
-
-          # `nix build .#docker` -- build the Docker image
+        } // pkgs.lib.optionalAttrs isLinux {
           docker = dockerImage;
-
-          # `nix build .#appliance` -- build the QEMU launcher
           vm-appliance = appliance;
         };
 
-        # APPS: What `nix run` executes.
-        #
-        # Multiple apps! Each one is a different way to run the project:
-        #   `nix run`             -- run the hello demo
-        #   `nix run .#server`    -- run the DNS server natively
-        #   `nix run .#client`    -- run the DNS client
-        #   `nix run .#appliance` -- boot the DNS server in a QEMU VM
+        # ── Apps ─────────────────────────────────────────────────────
+        # `nix run .#name` runs these.
 
         apps = {
           default = {
@@ -352,16 +231,14 @@
             type = "app";
             program = "${supreme-computing-machine}/bin/dns_client";
           };
+        } // pkgs.lib.optionalAttrs isLinux {
           appliance = {
             type = "app";
             program = "${appliance}/bin/dns-appliance";
           };
         };
 
-        # CHECKS: What `nix flake check` validates.
-        # CI will run this to verify the flake is healthy.
-        # We just re-use the package build (which includes tests).
-
+        # ── Checks ───────────────────────────────────────────────────
         checks.default = supreme-computing-machine;
       }
     );
