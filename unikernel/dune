@@ -1,0 +1,11 @@
+; unikernel/dune -- Build config for the unikernel.
+;
+; This builds as a normal Unix executable for development.
+; The architecture (functors + abstract interfaces) means the
+; same application code could be compiled for a different target
+; by swapping out the backend modules.
+
+(executable
+ (name main)
+ (public_name dns_unikernel)
+ (libraries dns_parser lwt lwt.unix))
