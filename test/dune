@@ -6,3 +6,7 @@
 (test
  (name test_dns)
  (libraries dns_parser alcotest))
+
+(test
+ (name test_x86)
+ (libraries x86_asm alcotest))

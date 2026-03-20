@@ -144,6 +144,27 @@
           then "-machine virt -cpu cortex-a57"
           else "-machine q35";
 
+        # ── Boot sector image ──────────────────────────────────────
+        # Assembles our x86 boot sector using the OCaml assembler.
+        # No kernel, no OS -- just 512 bytes of raw machine code.
+
+        bootImage = pkgs.runCommand "boot-image" {} ''
+          ${supreme-computing-machine}/bin/boot_sector $out
+        '';
+
+        bootQemu = pkgs.writeShellScriptBin "boot-qemu" ''
+          echo "=== supreme-computing-machine x86 bootloader ==="
+          echo ""
+          echo "Booting bare-metal boot sector in QEMU..."
+          echo "  No kernel. No OS. Just 512 bytes assembled by OCaml."
+          echo ""
+          echo "  Close the QEMU window to exit."
+          echo ""
+
+          ${pkgs.qemu}/bin/qemu-system-i386 \
+            -drive format=raw,file=${bootImage}
+        '';
+
         appliance = pkgs.writeShellScriptBin "dns-appliance" ''
           echo "=== supreme-computing-machine DNS appliance ==="
           echo ""
@@ -194,11 +215,13 @@
             echo "   dune exec dns_client -- example.com   -- query real DNS"
             echo "   dune exec dns_server                  -- run DNS server"
             echo "   dune exec -- unikernel/main.exe       -- run unikernel (Unix)"
+            echo "   dune exec boot_sector                 -- assemble boot sector"
             echo "   dune runtest                          -- run test suite"
             echo "   utop                                  -- OCaml REPL"
             echo ""
             echo " Nix commands:"
             echo "   nix run .#server                      -- run DNS server"
+            echo "   nix run .#boot                        -- boot x86 bootloader in QEMU"
             echo "   nix run .#appliance                   -- boot DNS VM in QEMU"
             echo "   nix build .#docker                    -- build Docker image"
             echo ""
@@ -210,6 +233,7 @@
 
         packages = {
           default = supreme-computing-machine;
+          boot-image = bootImage;
         } // pkgs.lib.optionalAttrs isLinux {
           docker = dockerImage;
           vm-appliance = appliance;
@@ -230,6 +254,10 @@
           client = {
             type = "app";
             program = "${supreme-computing-machine}/bin/dns_client";
+          };
+          boot = {
+            type = "app";
+            program = "${bootQemu}/bin/boot-qemu";
           };
         } // pkgs.lib.optionalAttrs isLinux {
           appliance = {

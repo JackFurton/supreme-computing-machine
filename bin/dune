@@ -7,3 +7,10 @@
  (names hello dns_client dns_server)
  (public_names hello dns_client dns_server)
  (libraries dns_parser lwt lwt.unix))
+
+; Boot sector assembler -- separate stanza because it only needs x86_asm,
+; not lwt or the DNS libraries. Dune allows multiple stanzas per file.
+(executable
+ (name boot_sector)
+ (public_name boot_sector)
+ (libraries x86_asm))

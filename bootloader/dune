@@ -1,0 +1,3 @@
+(library
+ (name x86_asm)
+ (public_name supreme-computing-machine.x86_asm))
