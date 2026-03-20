@@ -103,6 +103,40 @@ let test_mov_es_ax () =
     [Types.Mov_seg_r16 (ES, AX)]
 
 (* ================================================================
+   Stack operations
+   ================================================================ *)
+
+let test_push_ax () =
+  (* PUSH AX: 0x50 + 0 = 0x50 *)
+  check_bytes "push ax" [0x50] [Types.Push_r16 AX]
+
+let test_push_dx () =
+  (* PUSH DX: 0x50 + 2 = 0x52 *)
+  check_bytes "push dx" [0x52] [Types.Push_r16 DX]
+
+let test_pop_ax () =
+  (* POP AX: 0x58 + 0 = 0x58 *)
+  check_bytes "pop ax" [0x58] [Types.Pop_r16 AX]
+
+let test_pop_dx () =
+  (* POP DX: 0x58 + 2 = 0x5A *)
+  check_bytes "pop dx" [0x5A] [Types.Pop_r16 DX]
+
+(* ================================================================
+   I/O port operations
+   ================================================================ *)
+
+let test_out_dx_al () =
+  check_bytes "out dx, al" [0xEE] [Types.Out_dx_al]
+
+let test_in_al_dx () =
+  check_bytes "in al, dx" [0xEC] [Types.In_al_dx]
+
+let test_test_al_imm () =
+  (* TEST AL, 0x20: opcode 0xA8, imm8 0x20 *)
+  check_bytes "test al, 0x20" [0xA8; 0x20] [Types.Test_al_imm 0x20]
+
+(* ================================================================
    Interrupts
    ================================================================ *)
 
@@ -232,6 +266,17 @@ let () =
       Alcotest.test_case "hlt" `Quick test_hlt;
       Alcotest.test_case "ret" `Quick test_ret;
       Alcotest.test_case "lodsb" `Quick test_lodsb;
+    ];
+    "stack", [
+      Alcotest.test_case "push ax" `Quick test_push_ax;
+      Alcotest.test_case "push dx" `Quick test_push_dx;
+      Alcotest.test_case "pop ax" `Quick test_pop_ax;
+      Alcotest.test_case "pop dx" `Quick test_pop_dx;
+    ];
+    "io-ports", [
+      Alcotest.test_case "out dx, al" `Quick test_out_dx_al;
+      Alcotest.test_case "in al, dx" `Quick test_in_al_dx;
+      Alcotest.test_case "test al, imm" `Quick test_test_al_imm;
     ];
     "register-register", [
       Alcotest.test_case "xor ax, ax" `Quick test_xor_ax_ax;

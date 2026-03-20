@@ -157,12 +157,15 @@
           echo ""
           echo "Booting bare-metal boot sector in QEMU..."
           echo "  No kernel. No OS. Just 512 bytes assembled by OCaml."
+          echo "  Output via serial port (COM1) -- works headless!"
           echo ""
-          echo "  Close the QEMU window to exit."
+          echo "  Stop with: Ctrl-A then X"
           echo ""
 
           ${pkgs.qemu}/bin/qemu-system-i386 \
-            -drive format=raw,file=${bootImage}
+            -drive format=raw,file=${bootImage} \
+            -serial stdio \
+            -display none
         '';
 
         appliance = pkgs.writeShellScriptBin "dns-appliance" ''

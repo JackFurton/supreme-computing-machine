@@ -16,13 +16,18 @@ open X86_asm.Types
 
    What it does:
    1. Set up segment registers (required for memory access)
-   2. Point SI to our message string
-   3. Call a subroutine that prints each character via BIOS
-   4. Halt the CPU forever
+   2. Initialize COM1 serial port (0x3F8) for output
+   3. Point SI to our message string
+   4. Print each character to BOTH VGA screen and serial port
+   5. Halt the CPU forever
 
-   The BIOS teletype function (INT 0x10, AH=0x0E) prints one
-   character at a time to the screen. We loop until we hit a
-   null byte. Simple, ancient, beautiful. *)
+   With serial output, the bootloader works in headless mode too:
+     qemu-system-i386 -drive format=raw,file=boot.img -nographic
+   The message appears right in your terminal.
+
+   I/O PORTS: x86 has a separate 64K address space for hardware.
+   You talk to devices by reading/writing port numbers with IN/OUT.
+   COM1 (first serial port) lives at ports 0x3F8-0x3FD. *)
 
 let boot_program = [
   (* ---- Origin: BIOS loads us at 0x7C00 ---- *)
@@ -41,6 +46,46 @@ let boot_program = [
   Mov_r16_imm (SP, Imm16 0x7C00); (* stack grows down from 0x7C00 *)
   Sti;                           (* re-enable interrupts *)
 
+  (* ---- Initialize COM1 serial port ----
+     The 8250/16550 UART has several registers at ports 0x3F8-0x3FD.
+     We configure: 38400 baud, 8 data bits, no parity, 1 stop bit (8N1).
+
+     UART register map (base = 0x3F8):
+       +0  Data / Divisor Latch Low (when DLAB=1)
+       +1  Interrupt Enable / Divisor Latch High (when DLAB=1)
+       +2  FIFO Control
+       +3  Line Control (bit 7 = DLAB)
+       +4  Modem Control
+       +5  Line Status (bit 5 = TX empty) *)
+
+  Mov_r16_imm (DX, Imm16 0x3F9);   (* IER: Interrupt Enable Register *)
+  Mov_r8_imm (AL, 0x00);            (* disable all UART interrupts *)
+  Out_dx_al;
+
+  Mov_r16_imm (DX, Imm16 0x3FB);   (* LCR: Line Control Register *)
+  Mov_r8_imm (AL, 0x80);            (* set DLAB=1 to access baud divisor *)
+  Out_dx_al;
+
+  Mov_r16_imm (DX, Imm16 0x3F8);   (* DLL: Divisor Latch Low *)
+  Mov_r8_imm (AL, 0x03);            (* divisor=3 -> 38400 baud *)
+  Out_dx_al;
+
+  Mov_r16_imm (DX, Imm16 0x3F9);   (* DLH: Divisor Latch High *)
+  Mov_r8_imm (AL, 0x00);            (* high byte = 0 *)
+  Out_dx_al;
+
+  Mov_r16_imm (DX, Imm16 0x3FB);   (* LCR: Line Control Register *)
+  Mov_r8_imm (AL, 0x03);            (* 8 bits, no parity, 1 stop = 8N1 *)
+  Out_dx_al;
+
+  Mov_r16_imm (DX, Imm16 0x3FA);   (* FCR: FIFO Control Register *)
+  Mov_r8_imm (AL, 0xC7);            (* enable + clear FIFOs, 14-byte threshold *)
+  Out_dx_al;
+
+  Mov_r16_imm (DX, Imm16 0x3FC);   (* MCR: Modem Control Register *)
+  Mov_r8_imm (AL, 0x0B);            (* DTR + RTS + OUT2 (enables IRQs) *)
+  Out_dx_al;
+
   (* ---- Load message address and print ---- *)
   Mov_r16_imm (SI, Label "message");  (* SI -> our string *)
   Call "print_string";                 (* print it! *)
@@ -54,18 +99,53 @@ let boot_program = [
   Jmp "halt";
 
   (* ---- print_string subroutine ----
-     Prints null-terminated string at DS:SI using BIOS teletype.
+     Prints null-terminated string at DS:SI to BOTH outputs:
+     - VGA screen via BIOS INT 0x10 (AH=0x0E)
+     - Serial port via direct I/O to COM1 (0x3F8)
+
      LODSB loads byte from [DS:SI] into AL and increments SI.
-     INT 0x10 with AH=0x0E prints the character in AL. *)
+     We use PUSH/POP to save the character across the VGA call. *)
   Label_def "print_string";
   Lodsb;                         (* AL = [DS:SI], SI++ *)
   Test_r8_r8 (AL, AL);          (* set zero flag if AL = 0 *)
   Jz "print_done";              (* null terminator? done *)
-  Mov_r8_imm (AH, 0x0E);       (* BIOS teletype function *)
-  Int 0x10;                     (* call BIOS video interrupt *)
+  Call "putchar";                (* print to VGA + serial *)
   Jmp "print_string";           (* next character *)
   Label_def "print_done";
-  Ret;                           (* return to caller *)
+  Ret;
+
+  (* ---- putchar subroutine ----
+     Prints character in AL to both VGA and serial port.
+
+     Register dance:
+     1. Save AX (has our char) on the stack
+     2. Print to VGA via BIOS (may trash registers)
+     3. Wait for serial TX to be ready (poll Line Status Register)
+     4. Restore our char from stack and write to serial data port *)
+  Label_def "putchar";
+  Push_r16 AX;                  (* save char *)
+  Push_r16 DX;                  (* save DX *)
+
+  (* VGA output *)
+  Mov_r8_imm (AH, 0x0E);       (* BIOS teletype function *)
+  Int 0x10;                     (* print to screen *)
+
+  (* Serial: wait for transmitter to be ready *)
+  Label_def "serial_wait";
+  Mov_r16_imm (DX, Imm16 0x3FD);   (* Line Status Register *)
+  In_al_dx;                         (* read LSR *)
+  Test_al_imm 0x20;                 (* bit 5 = Transmitter Holding Empty *)
+  Jz "serial_wait";                 (* spin until ready *)
+
+  (* Serial: write the character *)
+  Pop_r16 DX;                   (* restore DX *)
+  Pop_r16 AX;                   (* restore AX (AL = our char) *)
+  Push_r16 DX;                  (* save DX again for cleanup *)
+  Mov_r16_imm (DX, Imm16 0x3F8);   (* COM1 data port *)
+  Out_dx_al;                        (* send character! *)
+
+  Pop_r16 DX;                   (* restore DX *)
+  Ret;
 
   (* ---- The message ---- *)
   Label_def "message";

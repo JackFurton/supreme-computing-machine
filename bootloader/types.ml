@@ -61,9 +61,21 @@ type instruction =
   | Ret                                 (* 0xC3: return from call *)
   | Lodsb                               (* 0xAC: load byte [DS:SI] -> AL, inc SI *)
 
+  (* -- Stack operations -- *)
+  | Push_r16 of reg16                   (* 0x50+reg: push register onto stack *)
+  | Pop_r16 of reg16                    (* 0x58+reg: pop stack into register *)
+
+  (* -- I/O port operations ----
+     x86 talks to hardware (serial ports, keyboards, disks) via
+     I/O ports -- a separate 64K address space accessed with IN/OUT.
+     These are THE instructions that make bare-metal programming work. *)
+  | Out_dx_al                           (* 0xEE: write AL to port in DX *)
+  | In_al_dx                            (* 0xEC: read port in DX into AL *)
+
   (* -- Register-register operations -- *)
   | Xor_r16_r16 of reg16 * reg16       (* 0x31 + ModRM: XOR dst, src *)
   | Test_r8_r8 of reg8 * reg8          (* 0x84 + ModRM: AND without storing *)
+  | Test_al_imm of int                  (* 0xA8 imm8: AND AL with immediate *)
 
   (* -- Register-immediate operations -- *)
   | Mov_r16_imm of reg16 * imm16       (* 0xB8+reg, LE16: load 16-bit value *)
@@ -122,10 +134,15 @@ let string_of_instruction = function
   | Hlt -> "hlt"
   | Ret -> "ret"
   | Lodsb -> "lodsb"
+  | Push_r16 r -> Printf.sprintf "push %s" (string_of_reg16 r)
+  | Pop_r16 r -> Printf.sprintf "pop %s" (string_of_reg16 r)
+  | Out_dx_al -> "out dx, al"
+  | In_al_dx -> "in al, dx"
   | Xor_r16_r16 (dst, src) ->
     Printf.sprintf "xor %s, %s" (string_of_reg16 dst) (string_of_reg16 src)
   | Test_r8_r8 (a, b) ->
     Printf.sprintf "test %s, %s" (string_of_reg8 a) (string_of_reg8 b)
+  | Test_al_imm v -> Printf.sprintf "test al, 0x%02X" v
   | Mov_r16_imm (r, v) ->
     Printf.sprintf "mov %s, %s" (string_of_reg16 r) (string_of_imm16 v)
   | Mov_r8_imm (r, v) ->

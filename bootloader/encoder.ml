@@ -41,9 +41,14 @@ let instruction_size (instr : Types.instruction) =
   match instr with
   (* Single-byte instructions *)
   | Cli | Sti | Hlt | Ret | Lodsb -> 1
+  | Push_r16 _ -> 1           (* 0x50+reg *)
+  | Pop_r16 _ -> 1            (* 0x58+reg *)
+  | Out_dx_al -> 1            (* 0xEE *)
+  | In_al_dx -> 1             (* 0xEC *)
   (* Two-byte instructions *)
   | Xor_r16_r16 _ -> 2       (* opcode + ModRM *)
   | Test_r8_r8 _ -> 2        (* opcode + ModRM *)
+  | Test_al_imm _ -> 2       (* 0xA8, imm8 *)
   | Mov_r8_imm _ -> 2        (* opcode+reg, imm8 *)
   | Int _ -> 2               (* 0xCD, imm8 *)
   | Jz _ -> 2                (* 0x74, rel8 *)
@@ -78,6 +83,23 @@ let encode_instruction (emit : Emitter.t) ~labels ~offset
   | Ret -> Emitter.emit_uint8 emit 0xC3; Ok ()
   | Lodsb -> Emitter.emit_uint8 emit 0xAC; Ok ()
 
+  (* -- PUSH r16 / POP r16 --
+     The stack is fundamental to subroutine calls.
+     PUSH decrements SP by 2, writes the value.
+     POP reads the value, increments SP by 2. *)
+  | Push_r16 reg ->
+    Emitter.emit_uint8 emit (0x50 + Types.reg16_code reg); Ok ()
+  | Pop_r16 reg ->
+    Emitter.emit_uint8 emit (0x58 + Types.reg16_code reg); Ok ()
+
+  (* -- I/O port instructions --
+     OUT writes a byte from AL to the I/O port in DX.
+     IN reads a byte from the I/O port in DX into AL.
+     This is how x86 talks to hardware: serial ports, disk
+     controllers, VGA, keyboard -- all via I/O ports. *)
+  | Out_dx_al -> Emitter.emit_uint8 emit 0xEE; Ok ()
+  | In_al_dx -> Emitter.emit_uint8 emit 0xEC; Ok ()
+
   (* -- XOR r16, r16 --
      Opcode 0x31 = XOR r/m16, r16
      ModRM encodes both registers *)
@@ -94,6 +116,14 @@ let encode_instruction (emit : Emitter.t) ~labels ~offset
     Emitter.emit_uint8 emit 0x84;
     Emitter.emit_uint8 emit
       (modrm_reg ~reg:(Types.reg8_code src) ~rm:(Types.reg8_code dst));
+    Ok ()
+
+  (* -- TEST AL, imm8 --
+     Opcode 0xA8 = special short form for testing AL against immediate.
+     Used to check individual bits (e.g., test al, 0x20 for bit 5). *)
+  | Test_al_imm imm ->
+    Emitter.emit_uint8 emit 0xA8;
+    Emitter.emit_uint8 emit imm;
     Ok ()
 
   (* -- MOV r16, imm16 --
