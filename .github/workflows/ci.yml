@@ -102,11 +102,14 @@ jobs:
 
       - name: Boot test (QEMU)
         run: |
-          # Boot with serial output, kill after 5 seconds.
-          # readonly=on because the Nix store is read-only (and we
-          # don't need disk writes -- it's a boot sector).
+          # Copy boot image out of the Nix store and make it writable.
+          # QEMU requires write access to disk images even if we don't
+          # write to them. The Nix store is read-only, and cp preserves
+          # those permissions, so we chmod after copying.
+          install -m 644 result /tmp/boot.img
+          # Boot with serial output, kill after 5 seconds
           timeout 5 qemu-system-i386 \
-            -drive format=raw,file=result,readonly=on \
+            -drive format=raw,file=/tmp/boot.img \
             -serial stdio \
             -display none 2>&1 | tee /tmp/boot_output.txt || true
           echo ""
