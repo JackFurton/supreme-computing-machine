@@ -90,52 +90,102 @@ let boot_program = [
   Mov_r16_imm (SI, Label "welcome");
   Call "print_string";
 
-  (* ---- Print prompt and enter interactive loop ----
-     This is where it gets fun: we read keystrokes from the
-     keyboard and echo them back. It's the world's simplest REPL,
-     running with zero OS underneath.
+  (* ---- Interactive command shell ----
+     We buffer keystrokes at 0x7E00 (512 bytes above our boot sector,
+     safely in unused memory). On Enter, we compare the buffer against
+     known commands.
 
-     BIOS INT 0x16, AH=0x00: wait for keypress.
-       Returns: AL = ASCII character, AH = scan code.
-     We handle three cases:
-       Enter (0x0D) -> print newline + new prompt
-       'q'          -> halt the machine
-       anything else -> echo it back *)
+     MEMORY MAP:
+       0x7C00-0x7DFF  Our boot sector (512 bytes)
+       0x7E00-0x7EFF  Input buffer (256 bytes, more than enough)
+
+     STOSB stores AL at [ES:DI] and increments DI -- the inverse
+     of LODSB. We use it to build the input buffer character by
+     character as the user types. *)
+
   Label_def "prompt";
   Mov_r16_imm (SI, Label "prompt_str");
   Call "print_string";
+  Mov_r16_imm (DI, Imm16 0x7E00);  (* reset buffer pointer *)
 
   Label_def "read_key";
   Mov_r8_imm (AH, 0x00);       (* BIOS: wait for keypress *)
   Int 0x16;                     (* AL = ASCII char *)
 
-  (* Check for Enter key (carriage return = 0x0D) *)
+  (* Enter key -> process the command *)
   Cmp_al_imm 0x0D;
-  Jz "handle_enter";
+  Jz "run_command";
 
-  (* Check for 'q' to quit *)
-  Cmp_al_imm 0x71;             (* 'q' = 0x71 *)
-  Jz "halt";
-
-  (* Echo the character *)
+  (* Buffer the character and echo it *)
+  Stosb;                        (* [ES:DI] = AL, DI++ *)
   Call "putchar";
   Jmp "read_key";
 
-  (* Handle Enter: print CR+LF then new prompt *)
-  Label_def "handle_enter";
-  Mov_r8_imm (AL, 0x0D);       (* carriage return *)
-  Call "putchar";
-  Mov_r8_imm (AL, 0x0A);       (* line feed *)
-  Call "putchar";
-  Jmp "prompt";                 (* show new prompt *)
+  (* ---- Command dispatcher ----
+     On Enter: null-terminate the buffer, print newline, then
+     compare the input against known commands using LODSB.
 
-  (* ---- Halt ---- *)
-  Label_def "halt";
-  Mov_r16_imm (SI, Label "bye_str");
+     We match on the first two characters since all commands
+     are unique by their first two letters:
+       "he..." -> help
+       "ha..." -> halt
+       "re..." -> reboot *)
+  Label_def "run_command";
+  Mov_r8_imm (AL, 0x00);       (* null-terminate the buffer *)
+  Stosb;
+  (* Print newline *)
+  Mov_r8_imm (AL, 0x0D);
+  Call "putchar";
+  Mov_r8_imm (AL, 0x0A);
+  Call "putchar";
+
+  (* Read first character of input *)
+  Mov_r16_imm (SI, Imm16 0x7E00);
+  Lodsb;
+  (* Empty line? just reprompt *)
+  Cmp_al_imm 0x00;
+  Jz "prompt";
+  (* Commands starting with 'h' *)
+  Cmp_al_imm 0x68;             (* 'h' *)
+  Jz "check_h";
+  (* Commands starting with 'r' *)
+  Cmp_al_imm 0x72;             (* 'r' *)
+  Jz "do_reboot";
+  Jmp "unknown_cmd";
+
+  (* Disambiguate: "help" vs "halt" by second character *)
+  Label_def "check_h";
+  Lodsb;
+  Cmp_al_imm 0x65;             (* 'e' -> help *)
+  Jz "do_help";
+  Cmp_al_imm 0x61;             (* 'a' -> halt *)
+  Jz "do_halt";
+  Jmp "unknown_cmd";
+
+  (* ---- Command handlers ---- *)
+  Label_def "do_help";
+  Mov_r16_imm (SI, Label "help_text");
+  Call "print_string";
+  Jmp "prompt";
+
+  Label_def "do_halt";
+  Mov_r16_imm (SI, Label "halt_text");
   Call "print_string";
   Cli;
   Hlt;
-  Jmp "halt";
+  Jmp "do_halt";
+
+  (* INT 0x19: the BIOS bootstrap interrupt.
+     This is what the BIOS calls to boot the machine.
+     Calling it again reboots -- loads sector 0 and jumps to 0x7C00.
+     Our bootloader runs again from scratch! *)
+  Label_def "do_reboot";
+  Int 0x19;
+
+  Label_def "unknown_cmd";
+  Mov_r16_imm (SI, Label "unknown_text");
+  Call "print_string";
+  Jmp "prompt";
 
   (* ---- print_string subroutine ----
      Prints null-terminated string at DS:SI to BOTH outputs:
@@ -186,17 +236,21 @@ let boot_program = [
   Pop_r16 DX;                   (* restore DX *)
   Ret;
 
-  (* ---- Data ----
-     \r\n = CR+LF, the standard line ending for serial terminals.
-     Dstring adds a null terminator so print_string knows where to stop. *)
+  (* ---- Data ---- *)
   Label_def "welcome";
-  Dstring "Hello from OCaml bootloader!\r\nType anything. Press 'q' to halt.\r\n";
+  Dstring "Hello from OCaml bootloader!\r\nType 'help' for commands.\r\n";
 
   Label_def "prompt_str";
   Dstring "> ";
 
-  Label_def "bye_str";
-  Dstring "\r\nHalted.";
+  Label_def "help_text";
+  Dstring "Commands: help halt reboot";
+
+  Label_def "halt_text";
+  Dstring "Halted.";
+
+  Label_def "unknown_text";
+  Dstring "Unknown command. Try 'help'.";
 ]
 
 (* ---- Assemble and write the boot image ---- *)

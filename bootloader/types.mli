@@ -30,6 +30,7 @@ type instruction =
   | Hlt
   | Ret
   | Lodsb
+  | Stosb
   | Push_r16 of reg16
   | Pop_r16 of reg16
   | Out_dx_al
