@@ -60,6 +60,7 @@ type instruction =
   | Hlt                                 (* 0xF4: halt until interrupt *)
   | Ret                                 (* 0xC3: return from call *)
   | Lodsb                               (* 0xAC: load byte [DS:SI] -> AL, inc SI *)
+  | Stosb                               (* 0xAA: store AL -> [ES:DI], inc DI *)
 
   (* -- Stack operations -- *)
   | Push_r16 of reg16                   (* 0x50+reg: push register onto stack *)
@@ -136,6 +137,7 @@ let string_of_instruction = function
   | Hlt -> "hlt"
   | Ret -> "ret"
   | Lodsb -> "lodsb"
+  | Stosb -> "stosb"
   | Push_r16 r -> Printf.sprintf "push %s" (string_of_reg16 r)
   | Pop_r16 r -> Printf.sprintf "pop %s" (string_of_reg16 r)
   | Out_dx_al -> "out dx, al"

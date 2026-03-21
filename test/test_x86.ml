@@ -43,6 +43,9 @@ let test_hlt () =
 let test_ret () =
   check_bytes "ret = 0xC3" [0xC3] [Types.Ret]
 
+let test_stosb () =
+  check_bytes "stosb = 0xAA" [0xAA] [Types.Stosb]
+
 let test_lodsb () =
   check_bytes "lodsb = 0xAC" [0xAC] [Types.Lodsb]
 
@@ -279,6 +282,7 @@ let () =
       Alcotest.test_case "hlt" `Quick test_hlt;
       Alcotest.test_case "ret" `Quick test_ret;
       Alcotest.test_case "lodsb" `Quick test_lodsb;
+      Alcotest.test_case "stosb" `Quick test_stosb;
     ];
     "stack", [
       Alcotest.test_case "push ax" `Quick test_push_ax;

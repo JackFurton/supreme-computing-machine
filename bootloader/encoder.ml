@@ -40,7 +40,7 @@ let modrm_reg ~reg ~rm =
 let instruction_size (instr : Types.instruction) =
   match instr with
   (* Single-byte instructions *)
-  | Cli | Sti | Hlt | Ret | Lodsb -> 1
+  | Cli | Sti | Hlt | Ret | Lodsb | Stosb -> 1
   | Push_r16 _ -> 1           (* 0x50+reg *)
   | Pop_r16 _ -> 1            (* 0x58+reg *)
   | Out_dx_al -> 1            (* 0xEE *)
@@ -84,6 +84,11 @@ let encode_instruction (emit : Emitter.t) ~labels ~offset
   | Hlt -> Emitter.emit_uint8 emit 0xF4; Ok ()
   | Ret -> Emitter.emit_uint8 emit 0xC3; Ok ()
   | Lodsb -> Emitter.emit_uint8 emit 0xAC; Ok ()
+
+  (* -- STOSB: store AL to [ES:DI], increment DI --
+     The inverse of LODSB. Used to build buffers in memory.
+     Here we use it to save typed characters into a line buffer. *)
+  | Stosb -> Emitter.emit_uint8 emit 0xAA; Ok ()
 
   (* -- PUSH r16 / POP r16 --
      The stack is fundamental to subroutine calls.
