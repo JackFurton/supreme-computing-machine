@@ -37,11 +37,13 @@ type instruction =
   | Xor_r16_r16 of reg16 * reg16
   | Test_r8_r8 of reg8 * reg8
   | Test_al_imm of int
+  | Cmp_al_imm of int
   | Mov_r16_imm of reg16 * imm16
   | Mov_r8_imm of reg8 * int
   | Mov_seg_r16 of seg_reg * reg16
   | Int of int
   | Jz of string
+  | Jnz of string
   | Jmp of string
   | Call of string
   | Org of int

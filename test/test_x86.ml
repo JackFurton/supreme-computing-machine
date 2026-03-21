@@ -136,6 +136,19 @@ let test_test_al_imm () =
   (* TEST AL, 0x20: opcode 0xA8, imm8 0x20 *)
   check_bytes "test al, 0x20" [0xA8; 0x20] [Types.Test_al_imm 0x20]
 
+let test_cmp_al_imm () =
+  (* CMP AL, 0x0D: opcode 0x3C, imm8 0x0D *)
+  check_bytes "cmp al, 0x0D" [0x3C; 0x0D] [Types.Cmp_al_imm 0x0D]
+
+let test_jnz_forward () =
+  (* JNZ skip:
+     offset 0: jnz skip  (2 bytes: 0x75, 0x01)
+     offset 2: hlt       (1 byte)
+     offset 3: skip:
+     rel = 3 - (0 + 2) = 1 *)
+  check_bytes "jnz forward" [0x75; 0x01; 0xF4]
+    [Types.Jnz "skip"; Types.Hlt; Types.Label_def "skip"]
+
 (* ================================================================
    Interrupts
    ================================================================ *)
@@ -277,6 +290,8 @@ let () =
       Alcotest.test_case "out dx, al" `Quick test_out_dx_al;
       Alcotest.test_case "in al, dx" `Quick test_in_al_dx;
       Alcotest.test_case "test al, imm" `Quick test_test_al_imm;
+      Alcotest.test_case "cmp al, imm" `Quick test_cmp_al_imm;
+      Alcotest.test_case "jnz forward" `Quick test_jnz_forward;
     ];
     "register-register", [
       Alcotest.test_case "xor ax, ax" `Quick test_xor_ax_ax;
