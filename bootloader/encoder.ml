@@ -49,9 +49,11 @@ let instruction_size (instr : Types.instruction) =
   | Xor_r16_r16 _ -> 2       (* opcode + ModRM *)
   | Test_r8_r8 _ -> 2        (* opcode + ModRM *)
   | Test_al_imm _ -> 2       (* 0xA8, imm8 *)
+  | Cmp_al_imm _ -> 2        (* 0x3C, imm8 *)
   | Mov_r8_imm _ -> 2        (* opcode+reg, imm8 *)
   | Int _ -> 2               (* 0xCD, imm8 *)
   | Jz _ -> 2                (* 0x74, rel8 *)
+  | Jnz _ -> 2               (* 0x75, rel8 *)
   | Jmp _ -> 2               (* 0xEB, rel8 *)
   (* Three-byte instructions *)
   | Mov_r16_imm _ -> 3       (* opcode+reg, imm16 LE *)
@@ -126,6 +128,15 @@ let encode_instruction (emit : Emitter.t) ~labels ~offset
     Emitter.emit_uint8 emit imm;
     Ok ()
 
+  (* -- CMP AL, imm8 --
+     Opcode 0x3C = special short form for comparing AL.
+     Subtracts imm from AL, sets flags, discards result.
+     Use JZ/JNZ after to branch on equal/not-equal. *)
+  | Cmp_al_imm imm ->
+    Emitter.emit_uint8 emit 0x3C;
+    Emitter.emit_uint8 emit imm;
+    Ok ()
+
   (* -- MOV r16, imm16 --
      Opcode = 0xB8 + register code
      Followed by 16-bit little-endian immediate *)
@@ -176,6 +187,21 @@ let encode_instruction (emit : Emitter.t) ~labels ~offset
          Error (Relative_jump_out_of_range (label_name, rel))
        else begin
          Emitter.emit_uint8 emit 0x74;
+         Emitter.emit_int8 emit rel;
+         Ok ()
+       end)
+
+  (* -- JNZ rel8 (jump if NOT zero/equal) --
+     Opcode 0x75, the complement of JZ (0x74). *)
+  | Jnz label_name ->
+    (match resolve_label labels label_name with
+     | Error e -> Error e
+     | Ok target ->
+       let rel = target - (offset + 2) in
+       if rel < -128 || rel > 127 then
+         Error (Relative_jump_out_of_range (label_name, rel))
+       else begin
+         Emitter.emit_uint8 emit 0x75;
          Emitter.emit_int8 emit rel;
          Ok ()
        end)

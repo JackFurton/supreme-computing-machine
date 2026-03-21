@@ -76,6 +76,7 @@ type instruction =
   | Xor_r16_r16 of reg16 * reg16       (* 0x31 + ModRM: XOR dst, src *)
   | Test_r8_r8 of reg8 * reg8          (* 0x84 + ModRM: AND without storing *)
   | Test_al_imm of int                  (* 0xA8 imm8: AND AL with immediate *)
+  | Cmp_al_imm of int                   (* 0x3C imm8: compare AL with immediate *)
 
   (* -- Register-immediate operations -- *)
   | Mov_r16_imm of reg16 * imm16       (* 0xB8+reg, LE16: load 16-bit value *)
@@ -87,6 +88,7 @@ type instruction =
 
   (* -- Control flow (all reference labels) -- *)
   | Jz of string                        (* 0x74 rel8: jump if zero flag set *)
+  | Jnz of string                       (* 0x75 rel8: jump if NOT zero/equal *)
   | Jmp of string                       (* 0xEB rel8: unconditional short jump *)
   | Call of string                      (* 0xE8 rel16: near call *)
 
@@ -143,6 +145,7 @@ let string_of_instruction = function
   | Test_r8_r8 (a, b) ->
     Printf.sprintf "test %s, %s" (string_of_reg8 a) (string_of_reg8 b)
   | Test_al_imm v -> Printf.sprintf "test al, 0x%02X" v
+  | Cmp_al_imm v -> Printf.sprintf "cmp al, 0x%02X" v
   | Mov_r16_imm (r, v) ->
     Printf.sprintf "mov %s, %s" (string_of_reg16 r) (string_of_imm16 v)
   | Mov_r8_imm (r, v) ->
@@ -151,6 +154,7 @@ let string_of_instruction = function
     Printf.sprintf "mov %s, %s" (string_of_seg_reg seg) (string_of_reg16 r)
   | Int n -> Printf.sprintf "int 0x%02X" n
   | Jz lbl -> Printf.sprintf "jz %s" lbl
+  | Jnz lbl -> Printf.sprintf "jnz %s" lbl
   | Jmp lbl -> Printf.sprintf "jmp %s" lbl
   | Call lbl -> Printf.sprintf "call %s" lbl
   | Org n -> Printf.sprintf "org 0x%04X" n

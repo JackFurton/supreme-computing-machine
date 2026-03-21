@@ -17,9 +17,9 @@ open X86_asm.Types
    What it does:
    1. Set up segment registers (required for memory access)
    2. Initialize COM1 serial port (0x3F8) for output
-   3. Point SI to our message string
-   4. Print each character to BOTH VGA screen and serial port
-   5. Halt the CPU forever
+   3. Print a welcome message
+   4. Enter an interactive loop: read keystrokes, echo them
+   5. Handle Enter (new line + prompt) and 'q' (halt)
 
    With serial output, the bootloader works in headless mode too:
      qemu-system-i386 -drive format=raw,file=boot.img -nographic
@@ -86,14 +86,53 @@ let boot_program = [
   Mov_r8_imm (AL, 0x0B);            (* DTR + RTS + OUT2 (enables IRQs) *)
   Out_dx_al;
 
-  (* ---- Load message address and print ---- *)
-  Mov_r16_imm (SI, Label "message");  (* SI -> our string *)
-  Call "print_string";                 (* print it! *)
+  (* ---- Print welcome message ---- *)
+  Mov_r16_imm (SI, Label "welcome");
+  Call "print_string";
 
-  (* ---- Halt: infinite loop ----
-     HLT stops the CPU until an interrupt. The JMP catches
-     any spurious interrupts and re-halts. *)
+  (* ---- Print prompt and enter interactive loop ----
+     This is where it gets fun: we read keystrokes from the
+     keyboard and echo them back. It's the world's simplest REPL,
+     running with zero OS underneath.
+
+     BIOS INT 0x16, AH=0x00: wait for keypress.
+       Returns: AL = ASCII character, AH = scan code.
+     We handle three cases:
+       Enter (0x0D) -> print newline + new prompt
+       'q'          -> halt the machine
+       anything else -> echo it back *)
+  Label_def "prompt";
+  Mov_r16_imm (SI, Label "prompt_str");
+  Call "print_string";
+
+  Label_def "read_key";
+  Mov_r8_imm (AH, 0x00);       (* BIOS: wait for keypress *)
+  Int 0x16;                     (* AL = ASCII char *)
+
+  (* Check for Enter key (carriage return = 0x0D) *)
+  Cmp_al_imm 0x0D;
+  Jz "handle_enter";
+
+  (* Check for 'q' to quit *)
+  Cmp_al_imm 0x71;             (* 'q' = 0x71 *)
+  Jz "halt";
+
+  (* Echo the character *)
+  Call "putchar";
+  Jmp "read_key";
+
+  (* Handle Enter: print CR+LF then new prompt *)
+  Label_def "handle_enter";
+  Mov_r8_imm (AL, 0x0D);       (* carriage return *)
+  Call "putchar";
+  Mov_r8_imm (AL, 0x0A);       (* line feed *)
+  Call "putchar";
+  Jmp "prompt";                 (* show new prompt *)
+
+  (* ---- Halt ---- *)
   Label_def "halt";
+  Mov_r16_imm (SI, Label "bye_str");
+  Call "print_string";
   Cli;
   Hlt;
   Jmp "halt";
@@ -147,9 +186,17 @@ let boot_program = [
   Pop_r16 DX;                   (* restore DX *)
   Ret;
 
-  (* ---- The message ---- *)
-  Label_def "message";
-  Dstring "Hello from OCaml bootloader!";
+  (* ---- Data ----
+     \r\n = CR+LF, the standard line ending for serial terminals.
+     Dstring adds a null terminator so print_string knows where to stop. *)
+  Label_def "welcome";
+  Dstring "Hello from OCaml bootloader!\r\nType anything. Press 'q' to halt.\r\n";
+
+  Label_def "prompt_str";
+  Dstring "> ";
+
+  Label_def "bye_str";
+  Dstring "\r\nHalted.";
 ]
 
 (* ---- Assemble and write the boot image ---- *)
