@@ -93,10 +93,17 @@ jobs:
       #    a virtual x86 CPU and verify it prints the expected message
       #    over the serial port. If the assembler encodes a single
       #    instruction wrong, this test catches it.
+      #
+      #    We install QEMU via apt rather than Nix here -- pulling QEMU
+      #    through Nix would download hundreds of dependencies. The boot
+      #    image is already built by Nix; we just need something to run it.
+      - name: Install QEMU
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-system-x86
+
       - name: Boot test (QEMU)
         run: |
           # Boot with serial output, kill after 5 seconds
-          timeout 5 nix develop --command qemu-system-i386 \
+          timeout 5 qemu-system-i386 \
             -drive format=raw,file=result \
             -serial stdio \
             -display none 2>&1 | tee /tmp/boot_output.txt || true
