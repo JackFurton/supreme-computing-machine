@@ -64,7 +64,55 @@ jobs:
       - name: Smoke test
         run: nix run 2>&1 | grep -q "supreme-computing-machine"
 
-      # 6. Show what we built (informational).
+      # 6. Build the boot sector image.
+      #    The OCaml assembler produces a 512-byte bootable disk image.
+      #    We verify: it exists, it's exactly 512 bytes, and it ends
+      #    with the 0x55AA boot signature.
+      - name: Build boot image
+        run: |
+          nix build .#boot-image
+          echo "Boot image built:"
+          ls -la result
+          SIZE=$(wc -c < result)
+          echo "Size: $SIZE bytes"
+          if [ "$SIZE" -ne 512 ]; then
+            echo "FAIL: boot image must be exactly 512 bytes"
+            exit 1
+          fi
+          # Check for 0x55AA boot signature at bytes 510-511
+          MAGIC=$(xxd -s 510 -l 2 -p result)
+          echo "Boot signature: $MAGIC"
+          if [ "$MAGIC" != "55aa" ]; then
+            echo "FAIL: missing boot signature 0x55AA"
+            exit 1
+          fi
+          echo "Boot image OK"
+
+      # 7. Integration test: boot the image in QEMU and check serial output.
+      #    This is the real deal -- we actually run the bootloader on
+      #    a virtual x86 CPU and verify it prints the expected message
+      #    over the serial port. If the assembler encodes a single
+      #    instruction wrong, this test catches it.
+      - name: Boot test (QEMU)
+        run: |
+          # Boot with serial output, kill after 5 seconds
+          timeout 5 nix develop --command qemu-system-i386 \
+            -drive format=raw,file=result \
+            -serial stdio \
+            -display none 2>&1 | tee /tmp/boot_output.txt || true
+          echo ""
+          echo "=== Serial output ==="
+          cat /tmp/boot_output.txt
+          echo ""
+          # Verify the expected message appeared
+          if grep -q "Hello from OCaml bootloader!" /tmp/boot_output.txt; then
+            echo "PASS: bootloader message detected"
+          else
+            echo "FAIL: expected 'Hello from OCaml bootloader!' in serial output"
+            exit 1
+          fi
+
+      # 8. Show what we built (informational).
       - name: Show build output
         run: |
           nix build
