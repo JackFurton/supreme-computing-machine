@@ -102,11 +102,11 @@ jobs:
 
       - name: Boot test (QEMU)
         run: |
-          # Copy boot image out of the Nix store (which is read-only)
-          cp result /tmp/boot.img
-          # Boot with serial output, kill after 5 seconds
+          # Boot with serial output, kill after 5 seconds.
+          # readonly=on because the Nix store is read-only (and we
+          # don't need disk writes -- it's a boot sector).
           timeout 5 qemu-system-i386 \
-            -drive format=raw,file=/tmp/boot.img \
+            -drive format=raw,file=result,readonly=on \
             -serial stdio \
             -display none 2>&1 | tee /tmp/boot_output.txt || true
           echo ""
